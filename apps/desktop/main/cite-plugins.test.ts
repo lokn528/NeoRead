@@ -19,6 +19,7 @@ import {
   registerWPS,
   uninstallCitePlugin,
   unregisterWPS,
+  windowsWordFolders,
   type CitePluginOptions,
 } from "./cite-plugins";
 
@@ -105,6 +106,20 @@ HKEY_CURRENT_USER\Software\Microsoft\Office\17.0\Word\Options
       ).folders,
     ).toEqual([String.raw`C:\Roaming\Microsoft\Word\Startup`]);
   });
+
+  // Live check on real Windows machines: the targeted queries must stay far
+  // below the detection timeout even with a huge Office registry tree.
+  it.skipIf(process.platform !== "win32")(
+    "resolves Word folders with targeted registry queries",
+    async () => {
+      const started = Date.now();
+      const result = await windowsWordFolders();
+      const elapsed = Date.now() - started;
+      expect(elapsed).toBeLessThan(30000);
+      expect(Array.isArray(result.folders)).toBe(true);
+      expect(typeof result.detected).toBe("boolean");
+    },
+  );
 });
 
 it("reports permission errors instead of treating Word as absent", async () => {

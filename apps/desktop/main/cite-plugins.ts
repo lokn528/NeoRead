@@ -83,30 +83,64 @@ function wordPaths({ platform, home, appData }: CitePluginOptions) {
   return null;
 }
 
+const OFFICE_HIVES: Array<[hive: string, fullName: string]> = [
+  ["HKCU", "HKEY_CURRENT_USER"],
+  ["HKLM", "HKEY_LOCAL_MACHINE"],
+];
+const OFFICE_VIEWS = ["/reg:64", "/reg:32"];
+
+async function query(key: string, view: string) {
+  try {
+    return (
+      await run("reg.exe", ["query", key, view], {
+        timeout: 10000,
+        maxBuffer: 4 * 1024 * 1024,
+      })
+    ).stdout;
+  } catch (error) {
+    // reg.exe exits with 1 for an absent key; other failures must not
+    // silently send the plugin to a directory Word will never load.
+    if ((error as { code?: unknown }).code === 1) return "";
+    throw error;
+  }
+}
+
+/**
+ * Resolve the Word startup folders without walking the whole Office tree.
+ * Machines with large Office registries (shared components, add-ins) take
+ * minutes for a recursive `reg query`, which used to trip the 10s timeout;
+ * targeted per-version lookups stay in milliseconds.
+ */
 export async function windowsWordFolders() {
-  const query = async (key: string, view: string) => {
-    try {
-      return (
-        await run("reg.exe", ["query", key, "/s", view], {
-          timeout: 10000,
-          maxBuffer: 4 * 1024 * 1024,
-        })
-      ).stdout;
-    } catch (error) {
-      // reg.exe exits with 1 for an absent key; other failures must not
-      // silently send the plugin to a directory Word will never load.
-      if ((error as { code?: unknown }).code === 1) return "";
-      throw error;
+  const chunks: string[] = [];
+  const bases = new Set<string>();
+  for (const [hive, fullName] of OFFICE_HIVES) {
+    const rootKey = `${hive}\\Software\\Microsoft\\Office`;
+    for (const view of OFFICE_VIEWS) {
+      const out = await query(rootKey, view);
+      for (const line of out.split(/\r?\n/)) {
+        const version = line
+          .trim()
+          .match(new RegExp(`^${fullName.replace(/\\/g, "\\\\")}\\\\Office\\\\(\\d+\\.0)$`, "i"));
+        if (version) bases.add(`${rootKey}\\${version[1]}`);
+      }
     }
-  };
-  const outputs = await Promise.all(
-    ["/reg:64", "/reg:32"].flatMap((view) =>
-      ["HKCU", "HKLM"].map((hive) =>
-        query(`${hive}\\Software\\Microsoft\\Office`, view),
-      ),
-    ),
-  );
-  return parseWindowsWordFolders(outputs.join("\n"), process.env);
+  }
+  const targets = new Set<string>();
+  for (const base of bases) {
+    targets.add(`${base}\\Word\\Options`);
+    targets.add(`${base}\\Common\\General`);
+    targets.add(`${base}\\Word`);
+  }
+  for (const key of targets) {
+    const fullName =
+      OFFICE_HIVES.find(([hive]) => key.startsWith(`${hive}\\`))?.[1] || key;
+    for (const view of OFFICE_VIEWS) {
+      const out = await query(key, view);
+      if (out.trim()) chunks.push(`${fullName}${key.slice(key.indexOf("\\"))}\n${out.trim()}`);
+    }
+  }
+  return parseWindowsWordFolders(chunks.join("\n"), process.env);
 }
 
 export function parseWindowsWordFolders(text: string, env: NodeJS.ProcessEnv) {
