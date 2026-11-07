@@ -87,6 +87,8 @@ func TestUserSkillFiles(t *testing.T) {
 	if e := os.WriteFile(filepath.Join(dir, "bommed.md"), bom("---\nname: bom-skill\ndescription: 带 BOM 的文件\n---\n\nBOM 正文。\n"), 0600); e != nil {
 		t.Fatal(e)
 	}
+	// A top-level README is folder documentation, never a skill.
+	write("README.md", "# 技能文件夹\n\n使用说明，不该出现在技能列表里。\n")
 
 	listed := s.userSkills()
 	var bommed *Skill
@@ -97,6 +99,14 @@ func TestUserSkillFiles(t *testing.T) {
 	}
 	if bommed == nil || bommed.Description != "带 BOM 的文件" || !strings.Contains(bommed.Body, "BOM 正文") {
 		t.Fatalf("BOM file not parsed: %+v", listed)
+	}
+	if len(listed) != 4 || listed[0].Name != "bom-skill" || listed[1].Name != "pkg-guide" || listed[2].Name != "plain-notes" || listed[3].Name != "my-guide" {
+		t.Fatalf("user skills: %+v", listed)
+	}
+	for _, skill := range listed {
+		if strings.EqualFold(skill.Name, "README") {
+			t.Fatalf("README leaked into the registry: %+v", skill)
+		}
 	}
 	if len(listed) != 4 || listed[0].Name != "bom-skill" || listed[1].Name != "pkg-guide" || listed[2].Name != "plain-notes" || listed[3].Name != "my-guide" {
 		t.Fatalf("user skills: %+v", listed)

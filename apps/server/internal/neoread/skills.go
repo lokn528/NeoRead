@@ -157,6 +157,10 @@ func (s *Server) userSkills() []Skill {
 		if entry.IsDir() {
 			file = filepath.Join(s.Store.Root, "skills", entry.Name(), "SKILL.md")
 		} else if strings.EqualFold(filepath.Ext(entry.Name()), ".md") {
+			// A top-level README.md is folder documentation, not a playbook.
+			if strings.EqualFold(entry.Name(), "README.md") {
+				continue
+			}
 			file = filepath.Join(s.Store.Root, "skills", entry.Name())
 		} else {
 			continue
