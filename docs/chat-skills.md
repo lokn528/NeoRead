@@ -35,9 +35,38 @@ external skill inspired the structure, the idea was adapted, not copied.
 | `figures` | per-figure guided reading with a worked example | `paper-reading` figure section |
 | `repro-check` | reproduction checklist with explicit missing-detail markers | the local `paper-lab` inventory idea |
 
+## Custom skills folder
+
+The server also reads playbooks from `<library>/skills`. Files are reread on
+every lookup, so adding or editing one takes effect on the next picker open —
+no rebuild, no restart:
+
+- `skills/<name>.md` — one playbook per file;
+- `skills/<name>/SKILL.md` — the Agent Skills directory form, so community
+  packages can be dropped in as-is (their bundled scripts are ignored; only
+  the playbook text applies in the read-only chat context).
+
+Frontmatter is optional:
+
+```markdown
+---
+name: my-guide          # defaults to the file name; shadows a same-named builtin
+description: 一行说明    # shown in the picker
+---
+
+正文即注入本轮指令的剧本……
+```
+
+A file without frontmatter counts as a playbook with the file name as its
+name. Files over 64 KiB are ignored, invalid ones are skipped, and the
+endpoint merges user playbooks before the builtins with same-name shadowing.
+
 ## Adding a skill
 
-Add one entry to `builtinSkills` in `apps/server/internal/neoread/skills.go`:
+To ship a builtin, add one entry to `builtinSkills` in
+`apps/server/internal/neoread/skills.go` (see the struct below). For personal
+or community playbooks, prefer the custom skills folder above — it needs no
+release.
 
 ```go
 type Skill struct {
@@ -62,7 +91,7 @@ injection all read the registry.
 
 ## Verification
 
-`go test ./internal/neoread/ -run Skill` covers validation, the empty
-registry, prompt injection and retry parity. Add a skill and run it again; the
+`go test ./internal/neoread/ -run Skill` covers validation, the user skills
+folder, prompt injection and retry parity. Add a skill and run it again; the
 API injection test uses its own temporary registry, so it does not depend on
 shipped skills.

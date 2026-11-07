@@ -262,7 +262,7 @@ func streamCodexDocumentChat(ctx context.Context, root, model string, in AIInput
 	// applied set is persisted with the conversation. Clearing the set injects
 	// an explicit retraction: the native thread still holds the old block.
 	if !slices.Equal(a.conversation.Skills, in.Chat.Skills) {
-		input.Prompt = skillTurnPrefix(a.conversation.Skills, in.Chat.Skills) + input.Prompt
+		input.Prompt = a.server.skillTurnPrefix(a.conversation.Skills, in.Chat.Skills) + input.Prompt
 		a.conversation.Skills = append([]string(nil), in.Chat.Skills...)
 	}
 	if len(missed) > 0 {

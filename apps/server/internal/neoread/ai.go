@@ -122,7 +122,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "阅读位置无效")
 		return
 	}
-	skills, err := normalizeChatSkills(req.Skills)
+	skills, err := s.normalizeChatSkills(req.Skills)
 	if err != nil {
 		fail(w, 400, err.Error())
 		return

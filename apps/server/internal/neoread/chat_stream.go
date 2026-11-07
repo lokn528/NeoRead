@@ -171,7 +171,7 @@ func (s *Server) streamChat(ctx context.Context, cancel context.CancelFunc, w ht
 	if in.Chat != nil && in.Chat.Agent == nil {
 		// Legacy CLI adapters (claude, kimi and fresh Codex chat sessions) take
 		// all instructions through the prompt; selected skills ride at the end.
-		in.Prompt = in.Chat.legacyPrompt() + readingLocationPrompt(in.Chat.ReadingLocation) + contextWarning + skillInstructions("", in.Chat.Skills)
+		in.Prompt = in.Chat.legacyPrompt() + readingLocationPrompt(in.Chat.ReadingLocation) + contextWarning + in.Chat.server.skillInstructions("", in.Chat.Skills)
 	}
 	service := s.generationService(config)
 	if conn, ok := service.connections["codex"]; ok {

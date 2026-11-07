@@ -3,6 +3,8 @@ package neoread
 import (
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 )
@@ -116,7 +118,16 @@ var builtinSkills = []Skill{
 // budget.
 const maxChatSkills = 3
 
-func skillByName(name string) (Skill, bool) {
+// skillByName resolves a skill from the user's library skills folder first,
+// then the shipped registry, so a custom playbook can replace a builtin.
+func (s *Server) skillByName(name string) (Skill, bool) {
+	if s != nil {
+		for _, skill := range s.userSkills() {
+			if skill.Name == name {
+				return skill, true
+			}
+		}
+	}
 	index := slices.IndexFunc(builtinSkills, func(s Skill) bool { return s.Name == name })
 	if index < 0 {
 		return Skill{}, false
@@ -124,14 +135,101 @@ func skillByName(name string) (Skill, bool) {
 	return builtinSkills[index], true
 }
 
-// normalizeChatSkills validates, deduplicates and caps requested skill names.
-func normalizeChatSkills(raw []string) ([]string, error) {
+// userSkills loads playbooks from `<library>/skills`: one `*.md` file or one
+// directory with a `SKILL.md` each. Files are reread on every lookup, so
+// editing or dropping a file takes effect without restarting the app. Invalid
+// files are skipped silently; the registry never fails because of them.
+func (s *Server) userSkills() []Skill {
+	if s == nil || s.Store == nil || s.Store.Root == "" {
+		return nil
+	}
+	entries, err := os.ReadDir(filepath.Join(s.Store.Root, "skills"))
+	if err != nil {
+		return nil
+	}
+	out := make([]Skill, 0, len(entries))
+	seen := map[string]bool{}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		var file string
+		if entry.IsDir() {
+			file = filepath.Join(s.Store.Root, "skills", entry.Name(), "SKILL.md")
+		} else if strings.EqualFold(filepath.Ext(entry.Name()), ".md") {
+			file = filepath.Join(s.Store.Root, "skills", entry.Name())
+		} else {
+			continue
+		}
+		skill, err := parseSkillFile(file, strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name())))
+		if err != nil || seen[skill.Name] {
+			continue
+		}
+		seen[skill.Name] = true
+		out = append(out, skill)
+	}
+	return out
+}
+
+// maxSkillFileBytes bounds one user playbook; oversized files are rejected so
+// a stray export can never consume the whole chat evidence budget.
+const maxSkillFileBytes = 64 << 10
+
+func parseSkillFile(path, fallbackName string) (Skill, error) {
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > maxSkillFileBytes {
+		if err == nil {
+			err = errors.New("技能文件超过大小限制")
+		}
+		return Skill{}, err
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return Skill{}, err
+	}
+	text := strings.ReplaceAll(string(raw), "\r\n", "\n")
+	name, description := fallbackName, ""
+	body := text
+	if rest, ok := strings.CutPrefix(text, "---\n"); ok {
+		head, tail, found := strings.Cut(rest, "\n---")
+		if !found {
+			return Skill{}, errors.New("技能头部未闭合")
+		}
+		body = strings.TrimSpace(strings.TrimPrefix(tail, "---"))
+		for _, line := range strings.Split(head, "\n") {
+			key, value, found := strings.Cut(line, ":")
+			if !found {
+				continue
+			}
+			value = strings.Trim(strings.TrimSpace(value), `"'`)
+			switch strings.ToLower(strings.TrimSpace(key)) {
+			case "name":
+				name = value
+			case "description":
+				description = value
+			}
+		}
+	}
+	name = strings.TrimSpace(name)
+	if name == "" || len(name) > 64 {
+		return Skill{}, errors.New("技能名称缺失或过长")
+	}
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return Skill{}, errors.New("技能正文为空")
+	}
+	return Skill{Name: name, Description: strings.TrimSpace(description), Body: body}, nil
+}
+
+// normalizeChatSkills validates, deduplicates and caps requested skill names
+// against the merged registry.
+func (s *Server) normalizeChatSkills(raw []string) ([]string, error) {
 	out := make([]string, 0, len(raw))
 	for _, name := range raw {
 		if name == "" || slices.Contains(out, name) {
 			continue
 		}
-		if _, ok := skillByName(name); !ok {
+		if _, ok := s.skillByName(name); !ok {
 			return nil, errors.New("未知技能：" + name)
 		}
 		out = append(out, name)
@@ -159,12 +257,12 @@ const skillRetraction = "<selected_skills>\n本轮未选择任何技能。此前
 // skillTurnPrefix renders what a reused provider session must see when the
 // applied skill set changes: the new playbooks, or an explicit retraction when
 // the selection empties. Equal sets need nothing.
-func skillTurnPrefix(applied, selected []string) string {
+func (s *Server) skillTurnPrefix(applied, selected []string) string {
 	if slices.Equal(applied, selected) {
 		return ""
 	}
 	if len(selected) > 0 {
-		return skillInstructions("", selected)
+		return s.skillInstructions("", selected)
 	}
 	if len(applied) > 0 {
 		return skillRetraction
@@ -177,13 +275,13 @@ func skillTurnPrefix(applied, selected []string) string {
 // the assistant, never instructions for document content, and it does not
 // change the untrusted-data boundary around documents, tool output or
 // history.
-func skillInstructions(base string, names []string) string {
+func (s *Server) skillInstructions(base string, names []string) string {
 	if len(names) == 0 {
 		return base
 	}
 	resolved := make([]Skill, 0, len(names))
 	for _, name := range names {
-		if skill, ok := skillByName(name); ok {
+		if skill, ok := s.skillByName(name); ok {
 			resolved = append(resolved, skill)
 		}
 	}
@@ -205,5 +303,19 @@ func skillInstructions(base string, names []string) string {
 
 func (s *Server) chatSkills(w http.ResponseWriter, r *http.Request) {
 	// Body carries json:"-"; the renderer only ever sees name/description.
-	respond(w, 200, map[string]any{"skills": builtinSkills})
+	// User playbooks come first and shadow same-named builtins.
+	merged := append([]Skill(nil), s.userSkills()...)
+	for _, skill := range builtinSkills {
+		found := false
+		for _, existing := range merged {
+			if existing.Name == skill.Name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			merged = append(merged, skill)
+		}
+	}
+	respond(w, 200, map[string]any{"skills": merged})
 }

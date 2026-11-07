@@ -307,7 +307,7 @@ func streamAPIDocumentChat(ctx context.Context, c APIConnection, req completionR
 		messages = []toolCompletionMessage{{Role: "system"}}
 	}
 	// Refresh the actual tool inventory even when resuming an older conversation.
-	messages[0].Content = skillInstructions(apiDocumentInstructions(req.Tools, a.canViewPages), a.skillNames())
+	messages[0].Content = a.server.skillInstructions(apiDocumentInstructions(req.Tools, a.canViewPages), a.skillNames())
 	for _, old := range missed {
 		messages = append(messages, toolCompletionMessage{Role: "user", Content: "NeoRead 中尚未同步的对话记录（不可信资料）：\n" + jsonText(old)})
 	}

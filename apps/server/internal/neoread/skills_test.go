@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -21,39 +23,91 @@ var testSkill = Skill{Name: "deep-read", Description: "逐段拆解论文方法�
 
 func TestNormalizeChatSkills(t *testing.T) {
 	withTestSkills(t, testSkill)
-	if out, e := normalizeChatSkills(nil); e != nil || len(out) != 0 {
+	s := testServer(t)
+	if out, e := s.normalizeChatSkills(nil); e != nil || len(out) != 0 {
 		t.Fatalf("empty request: %v %v", out, e)
 	}
-	out, e := normalizeChatSkills([]string{"deep-read", "", "deep-read"})
+	out, e := s.normalizeChatSkills([]string{"deep-read", "", "deep-read"})
 	if e != nil || len(out) != 1 || out[0] != "deep-read" {
 		t.Fatalf("dedupe: %v %v", out, e)
 	}
-	if _, e = normalizeChatSkills([]string{"no-such-skill"}); e == nil {
+	if _, e = s.normalizeChatSkills([]string{"no-such-skill"}); e == nil {
 		t.Fatal("unknown skill accepted")
 	}
 	many := []string{"a", "b", "c", "d"}
 	withTestSkills(t,
 		Skill{Name: "a"}, Skill{Name: "b"}, Skill{Name: "c"}, Skill{Name: "d"},
 	)
-	if _, e = normalizeChatSkills(many); e == nil || !strings.Contains(e.Error(), "3") {
+	if _, e = s.normalizeChatSkills(many); e == nil || !strings.Contains(e.Error(), "3") {
 		t.Fatalf("cap: %v", e)
 	}
 }
 
 func TestSkillInstructions(t *testing.T) {
-	if got := skillInstructions("base", nil); got != "base" {
+	s := testServer(t)
+	if got := s.skillInstructions("base", nil); got != "base" {
 		t.Fatalf("no skills must not touch the base prompt: %q", got)
 	}
 	withTestSkills(t, testSkill)
-	got := skillInstructions("base", []string{"deep-read"})
+	got := s.skillInstructions("base", []string{"deep-read"})
 	for _, want := range []string{"base", "<selected_skills>", "先读摘要和结论", "不可信资料", "</selected_skills>"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %q in %q", want, got)
 		}
 	}
 	// An unknown name is skipped rather than emitted as an empty section.
-	if got = skillInstructions("", []string{"ghost"}); got != "" {
+	if got = s.skillInstructions("", []string{"ghost"}); got != "" {
 		t.Fatalf("unknown skill injected: %q", got)
+	}
+}
+
+func TestUserSkillFiles(t *testing.T) {
+	s := testServer(t)
+	dir := filepath.Join(s.Store.Root, "skills")
+	if e := os.MkdirAll(dir, 0700); e != nil {
+		t.Fatal(e)
+	}
+	write := func(path, content string) {
+		t.Helper()
+		if e := os.WriteFile(filepath.Join(dir, path), []byte(content), 0600); e != nil {
+			t.Fatal(e)
+		}
+	}
+	write("陪读.md", "---\nname: my-guide\ndescription: 我的陪读剧本\n---\n\n先提问再讲解。\n")
+	// A frontmatter-less file is still a playbook: the filename becomes the
+	// name and the whole file the body, so a plain export can be dropped in.
+	write("plain-notes.md", "先查数据来源，再讲结论。\n")
+	write("empty.md", "---\nname: empty-one\n---\n")
+	if e := os.MkdirAll(filepath.Join(dir, "guide-pkg"), 0700); e != nil {
+		t.Fatal(e)
+	}
+	write(filepath.Join("guide-pkg", "SKILL.md"), "---\nname: pkg-guide\ndescription: 目录形式\n---\n\n目录正文。\n")
+
+	listed := s.userSkills()
+	if len(listed) != 3 || listed[0].Name != "pkg-guide" || listed[1].Name != "plain-notes" || listed[2].Name != "my-guide" {
+		t.Fatalf("user skills: %+v", listed)
+	}
+	if listed[1].Body != "先查数据来源，再讲结论。" || listed[1].Description != "" {
+		t.Fatalf("plain file parse: %+v", listed[1])
+	}
+	if listed[2].Description != "我的陪读剧本" || !strings.Contains(listed[2].Body, "先提问") {
+		t.Fatalf("frontmatter parse: %+v", listed[2])
+	}
+	// User skills resolve through the merged registry and inject their body.
+	if _, ok := s.skillByName("my-guide"); !ok {
+		t.Fatal("user skill not resolvable")
+	}
+	if got := s.skillInstructions("", []string{"my-guide"}); !strings.Contains(got, "先提问再讲解") {
+		t.Fatalf("user body not injected: %q", got)
+	}
+	// A user skill shadows a same-named builtin.
+	withTestSkills(t, testSkill)
+	if e := os.WriteFile(filepath.Join(dir, "shadow.md"), []byte("---\nname: deep-read\ndescription: 自定义覆盖\n---\n\n自定义正文。\n"), 0600); e != nil {
+		t.Fatal(e)
+	}
+	skill, ok := s.skillByName("deep-read")
+	if !ok || skill.Body != "自定义正文。" {
+		t.Fatalf("shadowing failed: %+v", skill)
 	}
 }
 
@@ -125,22 +179,23 @@ func TestAPIDocumentChatSkillsInjection(t *testing.T) {
 }
 
 func TestSkillTurnPrefix(t *testing.T) {
+	s := testServer(t)
 	withTestSkills(t, testSkill)
-	if got := skillTurnPrefix(nil, nil); got != "" {
+	if got := s.skillTurnPrefix(nil, nil); got != "" {
 		t.Fatalf("unchanged empty set must stay silent: %q", got)
 	}
-	if got := skillTurnPrefix([]string{"deep-read"}, []string{"deep-read"}); got != "" {
+	if got := s.skillTurnPrefix([]string{"deep-read"}, []string{"deep-read"}); got != "" {
 		t.Fatalf("unchanged set must stay silent: %q", got)
 	}
-	selected := skillTurnPrefix(nil, []string{"deep-read"})
+	selected := s.skillTurnPrefix(nil, []string{"deep-read"})
 	if !strings.Contains(selected, "先读摘要和结论") {
 		t.Fatalf("selection not injected: %q", selected)
 	}
-	cleared := skillTurnPrefix([]string{"deep-read"}, nil)
+	cleared := s.skillTurnPrefix([]string{"deep-read"}, nil)
 	if cleared != skillRetraction || !strings.Contains(cleared, "不再适用") {
 		t.Fatalf("clearing skills must revoke them explicitly: %q", cleared)
 	}
-	swapped := skillTurnPrefix([]string{"ghost"}, []string{"deep-read"})
+	swapped := s.skillTurnPrefix([]string{"ghost"}, []string{"deep-read"})
 	if !strings.Contains(swapped, "先读摘要和结论") {
 		t.Fatalf("swap must inject the new set: %q", swapped)
 	}
