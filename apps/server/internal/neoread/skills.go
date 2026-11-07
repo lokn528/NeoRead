@@ -187,7 +187,9 @@ func parseSkillFile(path, fallbackName string) (Skill, error) {
 	if err != nil {
 		return Skill{}, err
 	}
-	text := strings.ReplaceAll(string(raw), "\r\n", "\n")
+	// Windows editors (and PowerShell) write UTF-8 with a BOM; strip it so the
+	// frontmatter marker is still recognized.
+	text := strings.TrimPrefix(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\ufeff")
 	name, description := fallbackName, ""
 	body := text
 	if rest, ok := strings.CutPrefix(text, "---\n"); ok {

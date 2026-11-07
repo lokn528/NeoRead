@@ -82,16 +82,30 @@ func TestUserSkillFiles(t *testing.T) {
 		t.Fatal(e)
 	}
 	write(filepath.Join("guide-pkg", "SKILL.md"), "---\nname: pkg-guide\ndescription: 目录形式\n---\n\n目录正文。\n")
+	// PowerShell writes UTF-8 with a BOM; frontmatter must still parse.
+	bom := func(content string) []byte { return append([]byte{0xEF, 0xBB, 0xBF}, []byte(content)...) }
+	if e := os.WriteFile(filepath.Join(dir, "bommed.md"), bom("---\nname: bom-skill\ndescription: 带 BOM 的文件\n---\n\nBOM 正文。\n"), 0600); e != nil {
+		t.Fatal(e)
+	}
 
 	listed := s.userSkills()
-	if len(listed) != 3 || listed[0].Name != "pkg-guide" || listed[1].Name != "plain-notes" || listed[2].Name != "my-guide" {
+	var bommed *Skill
+	for i := range listed {
+		if listed[i].Name == "bom-skill" {
+			bommed = &listed[i]
+		}
+	}
+	if bommed == nil || bommed.Description != "带 BOM 的文件" || !strings.Contains(bommed.Body, "BOM 正文") {
+		t.Fatalf("BOM file not parsed: %+v", listed)
+	}
+	if len(listed) != 4 || listed[0].Name != "bom-skill" || listed[1].Name != "pkg-guide" || listed[2].Name != "plain-notes" || listed[3].Name != "my-guide" {
 		t.Fatalf("user skills: %+v", listed)
 	}
-	if listed[1].Body != "先查数据来源，再讲结论。" || listed[1].Description != "" {
-		t.Fatalf("plain file parse: %+v", listed[1])
+	if listed[2].Body != "先查数据来源，再讲结论。" || listed[2].Description != "" {
+		t.Fatalf("plain file parse: %+v", listed[2])
 	}
-	if listed[2].Description != "我的陪读剧本" || !strings.Contains(listed[2].Body, "先提问") {
-		t.Fatalf("frontmatter parse: %+v", listed[2])
+	if listed[3].Description != "我的陪读剧本" || !strings.Contains(listed[3].Body, "先提问") {
+		t.Fatalf("frontmatter parse: %+v", listed[3])
 	}
 	// User skills resolve through the merged registry and inject their body.
 	if _, ok := s.skillByName("my-guide"); !ok {
