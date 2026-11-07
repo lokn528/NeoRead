@@ -59,27 +59,29 @@ func TestSkillInstructions(t *testing.T) {
 
 func TestSkillsEndpoint(t *testing.T) {
 	s := testServer(t)
-	var empty struct {
-		Skills []Skill `json:"skills"`
-	}
-	if e := json.Unmarshal(request(t, s, "GET", "/api/skills", nil).Body.Bytes(), &empty); e != nil {
-		t.Fatal(e)
-	}
-	if len(empty.Skills) != 0 {
-		t.Fatalf("registry should ship empty: %+v", empty.Skills)
-	}
-	withTestSkills(t, testSkill)
 	var listed struct {
 		Skills []Skill `json:"skills"`
 	}
 	if e := json.Unmarshal(request(t, s, "GET", "/api/skills", nil).Body.Bytes(), &listed); e != nil {
 		t.Fatal(e)
 	}
-	if len(listed.Skills) != 1 || listed.Skills[0].Name != "deep-read" || listed.Skills[0].Description != testSkill.Description {
-		t.Fatalf("listed: %+v", listed.Skills)
+	if len(listed.Skills) != len(builtinSkills) || len(listed.Skills) == 0 {
+		t.Fatalf("registry mismatch: %d listed, %d builtin", len(listed.Skills), len(builtinSkills))
 	}
-	if listed.Skills[0].Body != "" {
-		t.Fatal("skill body must never leave the server")
+	names := map[string]bool{}
+	for _, skill := range listed.Skills {
+		if skill.Name == "" || skill.Description == "" {
+			t.Fatalf("incomplete skill entry: %+v", skill)
+		}
+		if skill.Body != "" {
+			t.Fatal("skill body must never leave the server")
+		}
+		names[skill.Name] = true
+	}
+	for _, want := range []string{"deep-read", "socratic", "review-lens", "stats-audit", "figures", "repro-check"} {
+		if !names[want] {
+			t.Fatalf("missing shipped skill: %s", want)
+		}
 	}
 }
 

@@ -19,6 +19,22 @@ instructions.
   turn input when the applied set changes, and the legacy CLI prompt. A Codex
   chat session with a different set is discarded rather than reused.
 
+## Shipped playbooks
+
+The registry ships six reading-companion skills. Each body is an original
+Chinese playbook written for NeoRead's read-only chat context (evidence
+citations via `[S#]`, document content stays untrusted data); where an
+external skill inspired the structure, the idea was adapted, not copied.
+
+| Name | Purpose | Primary inspiration |
+|---|---|---|
+| `deep-read` | causal-chain walkthrough: motivation → pipeline → real contribution → evidence bounds | [zhou2030109-glitch/paper-reading](https://github.com/zhou2030109-glitch/paper-reading); the local `nature-paper-card` claim-evidence matrix |
+| `socratic` | guided companion: checks understanding with questions before advancing | [oldlybaby/paper-reading-guide](https://github.com/oldlybaby/paper-reading-guide) (concept) |
+| `review-lens` | single-reviewer assessment with anchored Major/Minor concerns | the local `nature-reviewer` skill, degraded to one pass |
+| `stats-audit` | n/replication/uncertainty/check audit of methods and figures | the local `nature-statistics` skill |
+| `figures` | per-figure guided reading with a worked example | `paper-reading` figure section |
+| `repro-check` | reproduction checklist with explicit missing-detail markers | the local `paper-lab` inventory idea |
+
 ## Adding a skill
 
 Add one entry to `builtinSkills` in `apps/server/internal/neoread/skills.go`:
